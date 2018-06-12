@@ -31,13 +31,14 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class GenesisTxOutputValidator extends TxOutputValidator {
     @Inject
-    public GenesisTxOutputValidator(StateService stateService, OpReturnProcessor opReturnController) {
-        super(stateService, opReturnController);
+    public GenesisTxOutputValidator(StateService stateService, OpReturnProcessor opReturnProcessor) {
+        super(stateService, opReturnProcessor);
     }
 
     void validate(TxOutput txOutput, TxState txState) {
-        if (txOutput.getValue() <= txState.getAvailableInputValue()) {
-            txState.subtractFromInputValue(txOutput.getValue());
+        long value = txOutput.getPaddedValue(stateService, opReturnProcessor);
+        if (value <= txState.getAvailableInputValue()) {
+            txState.subtractFromInputValue(value);
             applyStateChangeForBsqOutput(txOutput, TxOutputType.GENESIS_OUTPUT);
         } else {
             // If we get one output which is not funded sufficiently by the available

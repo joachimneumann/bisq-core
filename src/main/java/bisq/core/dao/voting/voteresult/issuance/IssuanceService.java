@@ -17,10 +17,11 @@
 
 package bisq.core.dao.voting.voteresult.issuance;
 
-import bisq.core.dao.state.period.DaoPhase;
-import bisq.core.dao.state.period.PeriodService;
+import bisq.core.dao.node.validation.OpReturnProcessor;
 import bisq.core.dao.state.StateService;
 import bisq.core.dao.state.blockchain.TxOutput;
+import bisq.core.dao.state.period.DaoPhase;
+import bisq.core.dao.state.period.PeriodService;
 import bisq.core.dao.voting.proposal.compensation.CompensationProposal;
 
 import javax.inject.Inject;
@@ -34,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class IssuanceService {
     private final StateService stateService;
+    private final OpReturnProcessor opReturnProcessor;
     private final PeriodService periodService;
 
 
@@ -43,8 +45,10 @@ public class IssuanceService {
 
     @Inject
     public IssuanceService(StateService stateService,
+                           OpReturnProcessor opReturnProcessor,
                            PeriodService periodService) {
         this.stateService = stateService;
+        this.opReturnProcessor = opReturnProcessor;
         this.periodService = periodService;
     }
 
@@ -66,7 +70,7 @@ public class IssuanceService {
 
     private boolean isValid(TxOutput txOutput, CompensationProposal compensationProposal, PeriodService periodService, int chainHeight) {
         return txOutput.getTxId().equals(compensationProposal.getTxId())
-                && compensationProposal.getRequestedBsq().value == txOutput.getValue()
+                && compensationProposal.getRequestedBsq().value == txOutput.getPaddedValue(stateService, opReturnProcessor)
                 && compensationProposal.getBsqAddress().substring(1).equals(txOutput.getAddress())
                 && periodService.isTxInCorrectCycle(txOutput.getTxId(), chainHeight)
                 && periodService.isTxInPhase(txOutput.getTxId(), DaoPhase.Phase.PROPOSAL);

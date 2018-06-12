@@ -18,6 +18,8 @@
 package bisq.core.dao.state.blockchain;
 
 import bisq.core.dao.node.btcd.PubKeyScript;
+import bisq.core.dao.node.validation.OpReturnProcessor;
+import bisq.core.dao.state.StateService;
 
 import bisq.common.proto.persistable.PersistablePayload;
 import bisq.common.util.JsonExclude;
@@ -116,6 +118,22 @@ public class TxOutput implements PersistablePayload {
 
     public Key getKey() {
         return new Key(txId, index);
+    }
+
+    // Usually getPaddedValue is called for getting the real BSQ value which might include padding.
+    public long getValue() {
+        return value;
+    }
+
+    public long getPaddedValue(@Nullable byte[] opReturnData, OpReturnProcessor opReturnProcessor) {
+        int padding = opReturnProcessor.getPaddingFromOpReturn(opReturnData, index);
+        return padding < value ? value - padding : 0;
+    }
+
+    public long getPaddedValue(StateService stateService, OpReturnProcessor opReturnProcessor) {
+        return stateService.getTx(txId)
+                .map(tx -> getPaddedValue(tx.getLastOutput().getOpReturnData(), opReturnProcessor))
+                .orElse(0L);
     }
 
     @Override

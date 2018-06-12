@@ -129,6 +129,10 @@ public class TxValidator {
     private TxType getTxTypeForOpReturn(Tx tx, OpReturnType opReturnType) {
         TxType txType;
         switch (opReturnType) {
+            case VALUE_PADDING:
+                // At the moment we only support padding for transfer BSQ txs.
+                txType = TxType.TRANSFER_BSQ;
+                break;
             case COMPENSATION_REQUEST:
                 checkArgument(tx.getOutputs().size() >= 3, "Compensation request tx need to have at least 3 outputs");
                 final TxOutput issuanceTxOutput = tx.getOutputs().get(1);

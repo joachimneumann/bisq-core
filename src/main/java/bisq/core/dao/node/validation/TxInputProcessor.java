@@ -32,18 +32,19 @@ import lombok.extern.slf4j.Slf4j;
 public class TxInputProcessor {
 
     private final StateService stateService;
+    private final OpReturnProcessor opReturnProcessor;
 
     @Inject
-    public TxInputProcessor(StateService stateService) {
+    public TxInputProcessor(StateService stateService, OpReturnProcessor opReturnProcessor) {
         this.stateService = stateService;
+        this.opReturnProcessor = opReturnProcessor;
     }
 
     void process(TxInput txInput, int blockHeight, String txId, int inputIndex, TxState txState,
                  StateService stateService) {
         this.stateService.getUnspentAndMatureTxOutput(txInput.getTxIdIndexTuple())
                 .ifPresent(connectedTxOutput -> {
-                    txState.addToInputValue(connectedTxOutput.getValue());
-
+                    txState.addToInputValue(connectedTxOutput.getPaddedValue(stateService, opReturnProcessor));
                     // If we are spending an output from a blind vote tx marked as VOTE_STAKE_OUTPUT we save it in our txState
                     // for later verification at the outputs of a reveal tx.
                     if (stateService.getTxOutputType(connectedTxOutput) == TxOutputType.BLIND_VOTE_LOCK_STAKE_OUTPUT) {

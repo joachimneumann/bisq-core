@@ -24,20 +24,30 @@ import bisq.core.dao.state.blockchain.TxOutput;
 import bisq.core.dao.state.blockchain.TxOutputType;
 
 import bisq.common.app.DevEnv;
+import bisq.common.app.Version;
+import bisq.common.util.Tuple2;
 
 import org.bitcoinj.core.Utils;
 
 import javax.inject.Inject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 import lombok.extern.slf4j.Slf4j;
+
+import javax.annotation.Nullable;
 
 /**
  * Processes OpReturn output if valid and delegates validation to specific validators.
  */
 @Slf4j
 public class OpReturnProcessor {
+    private final OpReturnValuePaddingValidator opReturnValuePaddingValidator;
     private final OpReturnProposalValidator opReturnProposalValidator;
     private final OpReturnCompReqValidator opReturnCompReqValidator;
     private final OpReturnBlindVoteValidator opReturnBlindVoteValidator;
@@ -45,11 +55,13 @@ public class OpReturnProcessor {
     private final StateService stateService;
 
     @Inject
-    public OpReturnProcessor(OpReturnProposalValidator opReturnProposalValidator,
+    public OpReturnProcessor(OpReturnValuePaddingValidator opReturnValuePaddingValidator,
+                             OpReturnProposalValidator opReturnProposalValidator,
                              OpReturnCompReqValidator opReturnCompReqValidator,
                              OpReturnBlindVoteValidator opReturnBlindVoteValidator,
                              OpReturnVoteRevealValidator opReturnVoteRevealValidator,
                              StateService stateService) {
+        this.opReturnValuePaddingValidator = opReturnValuePaddingValidator;
 
         this.opReturnProposalValidator = opReturnProposalValidator;
         this.opReturnCompReqValidator = opReturnCompReqValidator;
@@ -63,17 +75,27 @@ public class OpReturnProcessor {
     public void processOpReturnCandidate(TxOutput txOutput, TxState txState) {
         // We do not check for pubKeyScript.scriptType.NULL_DATA because that is only set if dumpBlockchainData is true
         final byte[] opReturnData = txOutput.getOpReturnData();
+        // Padding is not used in opReturn and value has to be 0 anyway, so we ignore handling padding here
         if (txOutput.getValue() == 0 && opReturnData != null && opReturnData.length >= 1) {
             OpReturnType.getOpReturnType(opReturnData[0])
-                    .ifPresent(txState::setOpReturnTypeCandidate);
+                    .ifPresent(opReturnType -> {
+                        // Value padding need to be know before parsing the other outputs
+                        if (opReturnType == OpReturnType.VALUE_PADDING) {
+                            if (opReturnValuePaddingValidator.validate(opReturnData)) {
+                                txState.setOpReturnCandidateData(opReturnData);
+                                txState.setOpReturnTypeCandidate(opReturnType);
+                            }
+                        } else {
+                            txState.setOpReturnTypeCandidate(opReturnType);
+                        }
+                    });
         }
     }
 
     public void validate(byte[] opReturnData, TxOutput txOutput, Tx tx, int index, long bsqFee,
                          int blockHeight, TxState txState) {
-        if (txOutput.getValue() == 0 &&
-                index == tx.getOutputs().size() - 1 &&
-                opReturnData.length >= 1) {
+        // Padding is not used in opReturn and value has to be 0 anyway, so we ignore handling padding here
+        if (txOutput.getValue() == 0 && index == tx.getOutputs().size() - 1 && opReturnData.length >= 1) {
             final Optional<OpReturnType> optionalOpReturnType = OpReturnType.getOpReturnType(opReturnData[0]);
             if (optionalOpReturnType.isPresent()) {
                 selectValidator(opReturnData, txOutput, tx, bsqFee, blockHeight, txState, optionalOpReturnType.get());
@@ -90,6 +112,9 @@ public class OpReturnProcessor {
     private void selectValidator(byte[] opReturnData, TxOutput txOutput, Tx tx, long bsqFee, int blockHeight,
                                  TxState txState, OpReturnType opReturnType) {
         switch (opReturnType) {
+            case VALUE_PADDING:
+                processValuePadding(opReturnData, txOutput, txState);
+                break;
             case PROPOSAL:
                 processProposal(opReturnData, txOutput, bsqFee, blockHeight, txState);
                 break;
@@ -120,6 +145,73 @@ public class OpReturnProcessor {
 
                 break;
         }
+    }
+
+    private void processValuePadding(byte[] opReturnData, TxOutput txOutput, TxState txState) {
+        if (opReturnValuePaddingValidator.validate(opReturnData)) {
+            stateService.setTxOutputType(txOutput, TxOutputType.VALUE_PADDING_OP_RETURN_OUTPUT);
+            txState.setVerifiedOpReturnType(OpReturnType.VALUE_PADDING);
+        } else {
+            log.info("We expected a value padding op_return data but it did not " +
+                    "match our rules. txOutput={};", txOutput);
+            stateService.setTxOutputType(txOutput, TxOutputType.INVALID_OUTPUT);
+        }
+    }
+
+    public int getPaddingFromOpReturn(@Nullable byte[] opReturnData, int outputIndex) {
+        if (opReturnData != null && opReturnValuePaddingValidator.validate(opReturnData)) {
+            // First 2 bytes are type and version, after that we get groups of 3 bytes for
+            // index (1 byte) and padding (2 bytes)
+            for (int i = 2; i < opReturnData.length; i++) {
+                // We use first byte for output index. 256 is sufficient to cover possible output indexes.
+                int index = (int) opReturnData[i];
+                if (index == outputIndex) {
+                    // We convert 2 bytes to an integer. 65536 is sufficient for covering the dust (546)
+                    byte lowByte = opReturnData[++i];
+                    byte highByte = opReturnData[++i];
+                    return ((highByte & 0xFF) << 8) | (lowByte & 0xFF);
+                } else {
+                    i += 2;
+                }
+            }
+        }
+        return 0;
+    }
+
+    public byte[] getOpReturnDataForPadding(List<Tuple2<Integer, Integer>> paddingList) throws IOException {
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            outputStream.write(OpReturnType.VALUE_PADDING.getType());
+            outputStream.write(Version.VALUE_PADDING_VERSION);
+
+            paddingList.forEach(tuple -> {
+                int outputIndex = tuple.first;
+                int padding = tuple.second;
+
+                if (padding > 65535) {
+                    throw new IllegalArgumentException("padding must not be larger than 65535 (2 bytes)");
+                } else if (padding < 0) {
+                    throw new IllegalArgumentException("padding must not be negative");
+                }
+
+                outputStream.write((byte) outputIndex);
+                byte lowByte = (byte) (padding & 0xFF);
+                outputStream.write(lowByte);
+                byte highByte = (byte) ((padding >>> 8) & 0xFF);
+                outputStream.write(highByte);
+            });
+
+            return outputStream.toByteArray();
+        } catch (IOException e) {
+            e.printStackTrace();
+            log.error(e.toString());
+            throw e;
+        }
+    }
+
+    public byte[] getOpReturnDataForSinglePadding(int outputIndex, int padding) throws IOException {
+        List<Tuple2<Integer, Integer>> paddingList = new ArrayList<>();
+        paddingList.add(new Tuple2<>(outputIndex, padding));
+        return getOpReturnDataForPadding(paddingList);
     }
 
     private void processProposal(byte[] opReturnData, TxOutput txOutput, long bsqFee, int blockHeight, TxState txState) {

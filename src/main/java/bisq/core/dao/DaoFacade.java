@@ -19,6 +19,7 @@ package bisq.core.dao;
 
 import bisq.core.btc.exceptions.TransactionVerificationException;
 import bisq.core.btc.exceptions.WalletException;
+import bisq.core.dao.node.validation.OpReturnProcessor;
 import bisq.core.dao.state.BlockListener;
 import bisq.core.dao.state.ChainHeightListener;
 import bisq.core.dao.state.StateService;
@@ -82,6 +83,7 @@ public class DaoFacade {
     private final MyBlindVoteListService myBlindVoteListService;
     private final MyVoteListService myVoteListService;
     private final CompensationProposalService compensationProposalService;
+    private final OpReturnProcessor opReturnProcessor;
 
     private final ObjectProperty<DaoPhase.Phase> phaseProperty = new SimpleObjectProperty<>(DaoPhase.Phase.UNDEFINED);
 
@@ -95,7 +97,8 @@ public class DaoFacade {
                      BlindVoteService blindVoteService,
                      MyBlindVoteListService myBlindVoteListService,
                      MyVoteListService myVoteListService,
-                     CompensationProposalService compensationProposalService) {
+                     CompensationProposalService compensationProposalService,
+                     OpReturnProcessor opReturnProcessor) {
         this.filteredProposalListService = filteredProposalListService;
         this.ballotListService = ballotListService;
         this.filteredBallotListService = filteredBallotListService;
@@ -106,6 +109,7 @@ public class DaoFacade {
         this.myBlindVoteListService = myBlindVoteListService;
         this.myVoteListService = myVoteListService;
         this.compensationProposalService = compensationProposalService;
+        this.opReturnProcessor = opReturnProcessor;
 
         stateService.addChainHeightListener(chainHeight -> {
             if (chainHeight > 0 && periodService.getCurrentCycle() != null)
@@ -324,7 +328,14 @@ public class DaoFacade {
     }
 
     public long getTotalIssuedAmountFromCompRequests() {
-        return stateService.getTotalIssuedAmountFromCompRequests();
+        // We cannot do that inside stateService as opReturnProcessor uses stateService so that would cause
+        // a circular dependency
+        return stateService.getIssuanceCandidateTxOutputs().stream()
+                /*.filter(txOutput -> getTx(txOutput.getTxId()).isPresent())*/ // probably not needed but cross check in parser
+                .filter(txOutput -> isIssuanceTx(txOutput.getTxId()))
+                .mapToLong(txOutput -> txOutput.getPaddedValue(stateService, opReturnProcessor))
+                .sum();
+
     }
 
     public long getBlockTime(int issuanceBlockHeight) {

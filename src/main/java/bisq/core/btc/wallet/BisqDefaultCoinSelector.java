@@ -87,12 +87,16 @@ public abstract class BisqDefaultCoinSelector implements CoinSelector {
                     isTxSpendable(output.getParentTransaction()) &&
                     isTxOutputSpendable(output)) {
                 selected.add(output);
-                total += output.getValue().value;
+                total += getTransactionOutputValue(output);
             }
         }
         // Total may be lower than target here, if the given candidates were insufficient to create to requested
         // transaction.
         return new CoinSelection(Coin.valueOf(total), selected);
+    }
+
+    public long getTransactionOutputValue(TransactionOutput output) {
+        return output.getValue().value;
     }
 
     public Coin getChange(Coin target, CoinSelection coinSelection) throws InsufficientMoneyException {

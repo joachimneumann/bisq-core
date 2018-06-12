@@ -55,6 +55,8 @@ class TxState {
     @Nullable
     private TxInput inputFromBlindVoteStakeOutput;
     private boolean isSingleInputFromBlindVoteStakeOutput;
+    @Nullable
+    private byte[] opReturnCandidateData;
 
     TxState() {
     }

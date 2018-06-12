@@ -135,6 +135,7 @@ public class JsonBlockChainExporter {
                             final Optional<SpentInfo> optionalSpentInfo = stateService.getSpentInfo(txOutput);
                             final boolean isBsqOutput = stateService.isBsqTxOutputType(txOutput);
                             final PubKeyScript pubKeyScript = txOutput.getPubKeyScript();
+                            //TODO support padding
                             final JsonTxOutput outputForJson = new JsonTxOutput(txId,
                                     txOutput.getIndex(),
                                     isBsqOutput ? txOutput.getValue() : 0,

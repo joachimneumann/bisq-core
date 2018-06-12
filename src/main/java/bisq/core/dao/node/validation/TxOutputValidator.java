@@ -34,8 +34,8 @@ import javax.annotation.Nullable;
  */
 @Slf4j
 public class TxOutputValidator {
-    private final StateService stateService;
-    private final OpReturnProcessor opReturnProcessor;
+    protected final StateService stateService;
+    protected final OpReturnProcessor opReturnProcessor;
 
     @Inject
     public TxOutputValidator(StateService stateService, OpReturnProcessor opReturnProcessor) {
@@ -52,7 +52,7 @@ public class TxOutputValidator {
         // We do not check for pubKeyScript.scriptType.NULL_DATA because that is only set if dumpBlockchainData is true
         final byte[] opReturnData = txOutput.getOpReturnData();
         if (opReturnData == null) {
-            final long txOutputValue = txOutput.getValue();
+            long txOutputValue = txOutput.getPaddedValue(txState.getOpReturnCandidateData(), opReturnProcessor);
             if (bsqInputBalanceValue > 0 && bsqInputBalanceValue >= txOutputValue) {
                 handleBsqOutput(txOutput, index, txState, txOutputValue);
             } else {

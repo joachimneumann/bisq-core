@@ -396,7 +396,7 @@ public class BtcWalletService extends WalletService {
     ///////////////////////////////////////////////////////////////////////////////////////////
 
 
-    public Transaction completePreparedSendBsqTx(Transaction preparedBsqTx, boolean isSendTx) throws
+    public Transaction completePreparedSendBsqTx(Transaction preparedBsqTx, @Nullable byte[] opReturnData) throws
             TransactionVerificationException, WalletException, InsufficientMoneyException {
         // preparedBsqTx has following structure:
         // inputs [1-n] BSQ inputs
@@ -410,7 +410,7 @@ public class BtcWalletService extends WalletService {
         // outputs [0-1] BSQ change output
         // outputs [0-1] BTC change output
         // mining fee: BTC mining fee
-        return completePreparedBsqTx(preparedBsqTx, isSendTx, null);
+        return completePreparedBsqTx(preparedBsqTx, true, opReturnData);
     }
 
     public Transaction completePreparedBsqTx(Transaction preparedBsqTx, boolean useCustomTxFee, @Nullable byte[] opReturnData) throws

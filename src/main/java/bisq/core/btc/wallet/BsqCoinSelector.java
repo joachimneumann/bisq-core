@@ -17,11 +17,16 @@
 
 package bisq.core.btc.wallet;
 
+import bisq.core.dao.node.validation.OpReturnProcessor;
 import bisq.core.dao.state.StateService;
+import bisq.core.dao.state.blockchain.TxOutput;
 
+import org.bitcoinj.core.Transaction;
 import org.bitcoinj.core.TransactionOutput;
 
 import javax.inject.Inject;
+
+import java.util.Optional;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -31,12 +36,14 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class BsqCoinSelector extends BisqDefaultCoinSelector {
-    private StateService stateService;
+    private final StateService stateService;
+    private final OpReturnProcessor opReturnProcessor;
 
     @Inject
-    public BsqCoinSelector(StateService stateService) {
+    public BsqCoinSelector(StateService stateService, OpReturnProcessor opReturnProcessor) {
         super(true);
         this.stateService = stateService;
+        this.opReturnProcessor = opReturnProcessor;
     }
 
     @Override
@@ -44,5 +51,16 @@ public class BsqCoinSelector extends BisqDefaultCoinSelector {
         // output.getParentTransaction() cannot be null as it is checked in calling method
         return output.getParentTransaction() != null &&
                 stateService.isTxOutputSpendable(output.getParentTransaction().getHashAsString(), output.getIndex());
+    }
+
+    @Override
+    public long getTransactionOutputValue(TransactionOutput output) {
+        Transaction parentTransaction = output.getParentTransaction();
+        if (parentTransaction != null) {
+            Optional<TxOutput> optionalTxOutput = stateService.getUnspentTxOutput(new TxOutput.Key(parentTransaction.getHashAsString(), output.getIndex()));
+            if (optionalTxOutput.isPresent())
+                return optionalTxOutput.get().getPaddedValue(stateService, opReturnProcessor);
+        }
+        return 0;
     }
 }

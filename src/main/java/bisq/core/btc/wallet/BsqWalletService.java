@@ -21,6 +21,7 @@ import bisq.core.app.BisqEnvironment;
 import bisq.core.btc.Restrictions;
 import bisq.core.btc.exceptions.TransactionVerificationException;
 import bisq.core.btc.exceptions.WalletException;
+import bisq.core.dao.node.validation.OpReturnProcessor;
 import bisq.core.dao.state.BlockListener;
 import bisq.core.dao.state.StateService;
 import bisq.core.dao.state.blockchain.Block;
@@ -53,6 +54,8 @@ import javax.inject.Inject;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
+import java.io.IOException;
+
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +77,7 @@ import static org.bitcoinj.core.TransactionConfidence.ConfidenceType.PENDING;
 public class BsqWalletService extends WalletService implements BlockListener {
     private final BsqCoinSelector bsqCoinSelector;
     private final StateService stateService;
+    private final OpReturnProcessor opReturnProcessor;
     private final ObservableList<Transaction> walletTransactions = FXCollections.observableArrayList();
     private final CopyOnWriteArraySet<BsqBalanceListener> bsqBalanceListeners = new CopyOnWriteArraySet<>();
 
@@ -94,6 +98,7 @@ public class BsqWalletService extends WalletService implements BlockListener {
     public BsqWalletService(WalletsSetup walletsSetup,
                             BsqCoinSelector bsqCoinSelector,
                             StateService stateService,
+                            OpReturnProcessor opReturnProcessor,
                             Preferences preferences,
                             FeeService feeService) {
         super(walletsSetup,
@@ -102,6 +107,7 @@ public class BsqWalletService extends WalletService implements BlockListener {
 
         this.bsqCoinSelector = bsqCoinSelector;
         this.stateService = stateService;
+        this.opReturnProcessor = opReturnProcessor;
 
         if (BisqEnvironment.isBaseCurrencySupportingBsq()) {
             walletsSetup.addSetupCompletedHandler(() -> {
@@ -200,7 +206,7 @@ public class BsqWalletService extends WalletService implements BlockListener {
                             out.isMine(wallet) &&
                             parentTx.getConfidence().getConfidenceType() == PENDING;
                 })
-                .mapToLong(out -> out.getValue().value)
+                .mapToLong(bsqCoinSelector::getTransactionOutputValue)
                 .sum());
 
         Set<String> confirmedTxIdSet = getTransactions(false).stream()
@@ -210,12 +216,12 @@ public class BsqWalletService extends WalletService implements BlockListener {
 
         lockedForVotingBalance = Coin.valueOf(stateService.getUnspentBlindVoteStakeTxOutputs().stream()
                 .filter(txOutput -> confirmedTxIdSet.contains(txOutput.getTxId()))
-                .mapToLong(TxOutput::getValue)
+                .mapToLong(this::getTxOutputValue)
                 .sum());
 
         lockedInBondsBalance = Coin.valueOf(stateService.getLockedInBondOutputs().stream()
                 .filter(txOutput -> confirmedTxIdSet.contains(txOutput.getTxId()))
-                .mapToLong(TxOutput::getValue)
+                .mapToLong(this::getTxOutputValue)
                 .sum());
 
         availableBalance = bsqCoinSelector.select(NetworkParameters.MAX_MONEY, wallet.calculateAllSpendCandidates())
@@ -309,14 +315,8 @@ public class BsqWalletService extends WalletService implements BlockListener {
                         if (txOptional.isPresent()) {
                             TxOutput txOutput = txOptional.get().getOutputs().get(connectedOutput.getIndex());
                             if (stateService.isBsqTxOutputType(txOutput)) {
-                                //TODO check why values are not the same
-                                if (txOutput.getValue() != connectedOutput.getValue().value)
-                                    log.warn("getValueSentToMeForTransaction: Value of BSQ output do not match BitcoinJ tx output. " +
-                                                    "txOutput.getValue()={}, output.getValue().value={}, txId={}",
-                                            txOutput.getValue(), connectedOutput.getValue().value, txOptional.get().getId());
-
                                 // If it is a valid BSQ output we add it
-                                result = result.add(Coin.valueOf(txOutput.getValue()));
+                                result = result.add(Coin.valueOf(getTxOutputValue(txOutput)));
                             }
                         }
                     } /*else {
@@ -348,15 +348,8 @@ public class BsqWalletService extends WalletService implements BlockListener {
                         // The index of the BSQ tx outputs are the same like the bitcoinj tx outputs
                         TxOutput txOutput = txOptional.get().getOutputs().get(i);
                         if (stateService.isBsqTxOutputType(txOutput)) {
-                            //TODO check why values are not the same
-                            if (txOutput.getValue() != output.getValue().value) {
-                                log.warn("getValueSentToMeForTransaction: Value of BSQ output do not match BitcoinJ tx output. " +
-                                                "txOutput.getValue()={}, output.getValue().value={}, txId={}",
-                                        txOutput.getValue(), output.getValue().value, txId);
-                            }
-
                             // If it is a valid BSQ output we add it
-                            result = result.add(Coin.valueOf(txOutput.getValue()));
+                            result = result.add(Coin.valueOf(getTxOutputValue(txOutput)));
                         }
                     }
                 } /*else {
@@ -368,6 +361,10 @@ public class BsqWalletService extends WalletService implements BlockListener {
             }
         }
         return result;
+    }
+
+    public long getTxOutputValue(TxOutput txOutput) {
+        return txOutput.getPaddedValue(stateService, opReturnProcessor);
     }
 
     public Optional<Transaction> isWalletTransaction(String txId) {
@@ -391,7 +388,7 @@ public class BsqWalletService extends WalletService implements BlockListener {
 
         checkWalletConsistency(wallet);
         verifyTransaction(tx);
-        //printTx("BSQ wallet: Signed Tx", tx);
+        printTx("BSQ wallet: Signed Tx", tx);
         return tx;
     }
 
@@ -410,11 +407,10 @@ public class BsqWalletService extends WalletService implements BlockListener {
     // Send BSQ with BTC fee
     ///////////////////////////////////////////////////////////////////////////////////////////
 
-    public Transaction getPreparedSendTx(String receiverAddress, Coin receiverAmount)
-            throws AddressFormatException, InsufficientBsqException, WalletException, TransactionVerificationException {
+
+    public Transaction getPreparedSendTx(String receiverAddress, Coin receiverAmount, Address btcWalletChangeAddress)
+            throws AddressFormatException, InsufficientBsqException, WalletException, TransactionVerificationException, IOException {
         Transaction tx = new Transaction(params);
-        checkArgument(Restrictions.isAboveDust(receiverAmount),
-                "The amount is too low (dust limit).");
         tx.addOutput(receiverAmount, Address.fromBase58(params, receiverAddress));
 
         SendRequest sendRequest = SendRequest.forTx(tx);
@@ -431,9 +427,77 @@ public class BsqWalletService extends WalletService implements BlockListener {
         } catch (InsufficientMoneyException e) {
             throw new InsufficientBsqException(e.missing);
         }
+
+        if (!Restrictions.isAboveDust(receiverAmount)) {
+            // After we have received the inputs to fund the BSQ value we want to send we
+            // Add the padding to get the min dust limit as receiver amount.
+            // This output is not covered yet by the inputs but will get funded by BTC
+            // inputs.
+            TransactionOutput receiversOutput = tx.getOutput(0);
+            receiversOutput.setValue(Restrictions.getMinNonDustOutput());
+
+
+            // That part is not tested at all, but as we decided to leave the padding feature out due to the added
+            //complexity and risks we keep the code just as WIP...
+            if (tx.getOutputs().size() > 1) {
+                // If we have a change output we check if there is BSQ in that output
+                long totalBsqInputValue = 0;
+                for (int i = 0; i < tx.getInputs().size(); i++) {
+                    TransactionInput input = tx.getInputs().get(i);
+
+                    TransactionOutput connectedOutput = input.getConnectedOutput();
+                    if (connectedOutput != null && connectedOutput.getParentTransaction() != null) {
+                        TxOutput.Key key = new TxOutput.Key(connectedOutput.getParentTransaction().getHashAsString(),
+                                connectedOutput.getIndex());
+                        totalBsqInputValue += stateService.getUnspentTxOutput(key)
+                                .map(txOutput -> txOutput.getPaddedValue(stateService, opReturnProcessor))
+                                .orElse(0L);
+                    }
+                }
+
+                long bsqChangeAmount = totalBsqInputValue - receiverAmount.value;
+                if (bsqChangeAmount > 0) {
+                    // If we have any BSQ in the change we need to add a padding
+                    log.info("We have some BSQ value in the change output and need to add another padding.");
+                    // TODO: Add padding to opReturn
+                } else {
+                    // Change is BTC value only.
+                    // If it is less than 1000 satoshi we use it as miner fee. the tx will likely have about
+                    // 300-500 bytes and the miner fee with 2-3 sat/byte will result in about 1000 satoshi. So that
+                    // seems to be a reasonable value. It helps us to get rid of small chunks of BTC outputs.
+                    TransactionOutput changeOutput = tx.getOutput(1);
+
+                    // We clone the tx without the change output. In the next steps we either remove the
+                    // change tx output completely so the value will be used as miner fee, or we use a BTC address as
+                    // change output.
+                    // to remove the change output, so we add the amount to miner fees
+                    Transaction clonedTx = new Transaction(params);
+                    for (int i = 0; i < tx.getInputs().size(); i++) {
+                        clonedTx.addInput(tx.getInputs().get(i));
+                    }
+                    clonedTx.addOutput(receiversOutput);
+
+                    if (changeOutput.getValue().value <= 1000) {
+                        log.info("We have no BSQ value in the change output and the BTC value is <= 1000 sat, so we " +
+                                "use that as miner fee.");
+                        // We don't add the second output which was the change output, but leave the extra amount
+                        // as miner fee
+                    } else {
+                        log.info("We have no BSQ value in the change output and the BTC value is > 1000 sat, so we " +
+                                "use a BTC wallet address as change address.");
+                        // We have larger amount and we use a BTC address as change address to avoid that we collect
+                        // larger BTC values in the BSQ wallet.
+                        clonedTx.addOutput(changeOutput.getValue(), btcWalletChangeAddress);
+                    }
+
+                    tx = clonedTx;
+                }
+            }
+        }
+
         checkWalletConsistency(wallet);
         verifyTransaction(tx);
-        // printTx("prepareSendTx", tx);
+        printTx("prepareSendTx", tx);
         return tx;
     }
 
@@ -496,7 +560,7 @@ public class BsqWalletService extends WalletService implements BlockListener {
 
     public Transaction getPreparedVoteRevealTx(TxOutput stakeTxOutput) {
         Transaction tx = new Transaction(params);
-        final Coin stake = Coin.valueOf(stakeTxOutput.getValue());
+        final Coin stake = Coin.valueOf(getTxOutputValue(stakeTxOutput));
         Transaction blindVoteTx = getTransaction(stakeTxOutput.getTxId());
         checkNotNull(blindVoteTx, "blindVoteTx must not be null");
         TransactionOutPoint outPoint = new TransactionOutPoint(params, stakeTxOutput.getIndex(), blindVoteTx);

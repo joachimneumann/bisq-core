@@ -17,6 +17,7 @@
 
 package bisq.core.dao.voting.voteresult;
 
+import bisq.core.dao.node.validation.OpReturnProcessor;
 import bisq.core.dao.state.StateService;
 import bisq.core.dao.state.blockchain.Tx;
 import bisq.core.dao.state.blockchain.TxOutput;
@@ -85,6 +86,7 @@ public class VoteResultService {
     private final BlindVoteService blindVoteService;
     private final BlindVoteValidator blindVoteValidator;
     private final IssuanceService issuanceService;
+    private final OpReturnProcessor opReturnProcessor;
     @Getter
     private final ObservableList<VoteResultException> voteResultExceptions = FXCollections.observableArrayList();
     // Use a list to have order by cycle
@@ -103,7 +105,8 @@ public class VoteResultService {
                              MyBlindVoteListService myBlindVoteListService,
                              BlindVoteService blindVoteService,
                              BlindVoteValidator blindVoteValidator,
-                             IssuanceService issuanceService) {
+                             IssuanceService issuanceService,
+                             OpReturnProcessor opReturnProcessor) {
         this.voteRevealService = voteRevealService;
         this.stateService = stateService;
         this.periodService = periodService;
@@ -112,6 +115,7 @@ public class VoteResultService {
         this.blindVoteService = blindVoteService;
         this.blindVoteValidator = blindVoteValidator;
         this.issuanceService = issuanceService;
+        this.opReturnProcessor = opReturnProcessor;
 
         stateService.addChainHeightListener(this::maybeCalculateVoteResult);
     }
@@ -190,7 +194,7 @@ public class VoteResultService {
                         SecretKey secretKey = VoteResultConsensus.getSecretKey(opReturnData);
                         Tx voteRevealTx = stateService.getTx(voteRevealTxId).get();
                         TxOutput blindVoteStakeOutput = VoteResultConsensus.getConnectedBlindVoteStakeOutput(voteRevealTx, stateService);
-                        long blindVoteStake = blindVoteStakeOutput.getValue();
+                        long blindVoteStake = blindVoteStakeOutput.getPaddedValue(stateService, opReturnProcessor);
                         Tx blindVoteTx = VoteResultConsensus.getBlindVoteTx(blindVoteStakeOutput, stateService, periodService, chainHeight);
                         String blindVoteTxId = blindVoteTx.getId();
 

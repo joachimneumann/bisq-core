@@ -463,14 +463,6 @@ public class StateService {
                 .collect(Collectors.toSet());
     }
 
-    public long getTotalIssuedAmountFromCompRequests() {
-        return getIssuanceCandidateTxOutputs().stream()
-                /*.filter(txOutput -> getTx(txOutput.getTxId()).isPresent())*/ // probably not needed but cross check in parser
-                .filter(txOutput -> isIssuanceTx(txOutput.getTxId()))
-                .mapToLong(TxOutput::getValue)
-                .sum();
-    }
-
     //TODO
     // for genesis we don't need it and for issuance we need more implemented first
     public boolean isTxOutputMature(TxOutput txOutput) {
