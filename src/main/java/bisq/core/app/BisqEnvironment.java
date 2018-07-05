@@ -197,7 +197,7 @@ public class BisqEnvironment extends StandardEnvironment {
     protected final String btcNodes, seedNodes, ignoreDevMsg, useDevPrivilegeKeys, useDevMode, useTorForBtc, rpcUser, rpcPassword,
             rpcPort, rpcBlockNotificationPort, dumpBlockchainData, fullDaoNode,
             myAddress, banList, dumpStatistics, maxMemory, socks5ProxyBtcAddress,
-            socks5ProxyHttpAddress, useAllProvidedNodes, numConnectionForBtc, genesisTxId, genesisBlockHeight;
+            socks5ProxyHttpAddress, useAllProvidedNodes, numConnectionForBtc, genesisTxId, genesisBlockHeight, referralId;
 
 
     public BisqEnvironment(OptionSet options) {
@@ -237,6 +237,9 @@ public class BisqEnvironment extends StandardEnvironment {
                 "";
         useDevPrivilegeKeys = commandLineProperties.containsProperty(AppOptionKeys.USE_DEV_PRIVILEGE_KEYS) ?
                 (String) commandLineProperties.getProperty(AppOptionKeys.USE_DEV_PRIVILEGE_KEYS) :
+                "";
+        referralId = commandLineProperties.containsProperty(AppOptionKeys.REFERRAL_ID) ?
+                (String) commandLineProperties.getProperty(AppOptionKeys.REFERRAL_ID) :
                 "";
         useDevMode = commandLineProperties.containsProperty(CommonOptionKeys.USE_DEV_MODE) ?
                 (String) commandLineProperties.getProperty(CommonOptionKeys.USE_DEV_MODE) :
@@ -438,6 +441,7 @@ public class BisqEnvironment extends StandardEnvironment {
                 setProperty(AppOptionKeys.DESKTOP_WITH_GRPC_API, desktopWithGrpcApi);
                 setProperty(AppOptionKeys.IGNORE_DEV_MSG_KEY, ignoreDevMsg);
                 setProperty(AppOptionKeys.USE_DEV_PRIVILEGE_KEYS, useDevPrivilegeKeys);
+                setProperty(AppOptionKeys.REFERRAL_ID, referralId);
                 setProperty(CommonOptionKeys.USE_DEV_MODE, useDevMode);
                 setProperty(AppOptionKeys.DUMP_STATISTICS, dumpStatistics);
                 setProperty(AppOptionKeys.APP_NAME_KEY, appName);
